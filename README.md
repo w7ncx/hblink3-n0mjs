@@ -108,6 +108,17 @@ information -- preferencing voice quality and integrity over all else.
 database for ID to callsign mapping. Inclusion of Talker Alias may be 
 considered in the future.
 
+## Companion programs
+
+Separate repositories by the same author. All are small, dependency-free C
+programs that run alongside HBlink3 and connect to it over the network.
+
+| Program | Purpose |
+|---|---|
+| [dmr-talkback](https://github.com/n0mjs710/dmr-talkback) | Voice test ("echo") endpoint. Connects as an ordinary HBP repeater, records a call and plays it back so the caller hears their own audio. Answers group calls, private (unit) calls, or both. Give it a dedicated bridge for its talkgroup in `rules.py`. |
+| [ipsc2hbpc](https://github.com/n0mjs710/ipsc2hbpc) | IPSC ⇄ HBP translator. Connects Motorola IPSC systems (and c-Bridge IPSC peers) to an HBlink3 system. |
+| [cc2obp](https://github.com/n0mjs710/cc2obp) | c-Bridge CC-CC ⇄ OpenBridge translator. Peers an HBlink3 OpenBridge system with a c-Bridge over its native CC-CC link. |
+
 ## Requirements
 
 - Python, at least, **3.8+** (Linux recommended)
