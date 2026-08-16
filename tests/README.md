@@ -9,6 +9,13 @@ isolation instead.
   PERMIT/DENY matching, per-timeslot scoping, and the once-per-stream drop logging.
 - `test_lc.py` — `gen_lcs()` and `embed_lc()` from `bridge.py`: Link Control
   generation and the DMR payload LC rewrite used by all four group-routing paths.
+- `test_xlx_link.py` — the XLX reflector module link: packet construction
+  (`send_xlx_link`/`xlx_link_module`), `expand_xlx_bridges()` and its guards, and
+  `XLX_MODULE` config validation. The acceptance gates asserted here are
+  transcribed from xlxd's own parser, because a reflector never acknowledges a
+  link and puts no module identity on the wire — a malformed packet is silently
+  discarded, so there is no runtime signal to fall back on. One test reproduces
+  the field-proven 2019 reference bursts byte for byte.
 
 ## Running
 

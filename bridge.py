@@ -188,6 +188,65 @@ def expand_obp_bridges(_bridges, _obp_bridges):
     return _bridges
 
 
+# XLX reflector connections are configured in their own table (XLX_BRIDGES in
+# rules.py), mapping each XLX system to exactly one conference bridge:
+#
+#   XLX_BRIDGES = { 'XLX950-D': 'WORLDWIDE' }
+#
+# There is deliberately no TS or TGID column. Every XLX module presents as TS2/TG9
+# on the wire, so those are protocol constants injected here, never read from the
+# rules file. This is not merely a default: a wrong value would produce traffic
+# that leaves HBlink looking healthy and is silently discarded by xlxd, which never
+# acknowledges anything and puts no module identity on the wire -- there would be no
+# symptom to debug. The flat {system: bridge} shape makes a wrong value inexpressible.
+#
+# No timers, triggers, or ON/OFF/RESET lists: there is no end user on an XLX
+# connection to send them.
+def expand_xlx_bridges(_bridges, _xlx_bridges):
+    def _is_xlx(_sys):
+        return _sys in CONFIG['SYSTEMS'] and CONFIG['SYSTEMS'][_sys].get('XLX_MODULE')
+
+    # Reject inline XLX membership -- keeping them in one table is the whole point.
+    for _bridge, _members in _bridges.items():
+        for _m in _members:
+            if _is_xlx(_m['SYSTEM']):
+                sys.exit('ERROR: XLX system "{}" is an inline member of bridge "{}". '
+                         'XLX systems belong in the XLX_BRIDGES table in rules.py, not in BRIDGES.'
+                         .format(_m['SYSTEM'], _bridge))
+
+    for _xlx, _bridge in _xlx_bridges.items():
+        if not _is_xlx(_xlx):
+            sys.exit('ERROR: XLX_BRIDGES entry "{}" is not an enabled system with XLX_MODULE set '
+                     'in the main configuration'.format(_xlx))
+        if not isinstance(_bridge, str):
+            sys.exit('ERROR: XLX_BRIDGES entry "{}" must map to a single bridge name. XLX systems '
+                     'carry one module on one bridge; TS and TGID are not configurable.'.format(_xlx))
+
+        _bridges.setdefault(_bridge, []).append({
+            'SYSTEM': _xlx, 'TS': XLX_TS, 'TGID': XLX_TGID, 'ACTIVE': True,
+            'TIMEOUT': 2, 'TO_TYPE': 'NONE', 'ON': [], 'OFF': [], 'RESET': [],
+        })
+        logger.info('(ROUTER) XLX system %s (module %s) bridged to "%s" on TS%s/TG%s',
+                    _xlx, CONFIG['SYSTEMS'][_xlx]['XLX_MODULE'], _bridge, XLX_TS, XLX_TGID)
+
+    return _bridges
+
+
+# An XLX connection must never receive a private call. The module binding is
+# changed by a private call to 4001-4026, so a unit call forwarded to an XLX system
+# could silently move the reflector into a different room for every user on it.
+#
+# Scrubbing UNIT is sufficient on its own: UNIT is the only source of unit-call
+# targets (the unknown-destination flood path uses list(UNIT)), and reflector IDs
+# are never in UNIT_MAP because that is populated only when a subscriber transmits.
+def validate_xlx_unit(_unit):
+    for _sys in _unit:
+        if _sys in CONFIG['SYSTEMS'] and CONFIG['SYSTEMS'][_sys].get('XLX_MODULE'):
+            sys.exit('ERROR: XLX system "{}" cannot be a member of UNIT. A private call forwarded '
+                     'to an XLX reflector would change its module for every connected user.'
+                     .format(_sys))
+
+
 # Build the routing indexes from the processed BRIDGES structure. Call once after
 # make_bridges() (and again only if bridge membership is ever rebuilt at runtime).
 # src_index: (system, ts, tgid) -> [(bridge_name, source_member, sibling_members), ...]
@@ -1091,13 +1150,16 @@ if __name__ == '__main__':
     # Expand the per-OBP TGID<->bridge table (rules.OBP_BRIDGES, optional) into
     # synthetic bridge members, then build the routing rules file.
     _obp_bridges = getattr(rules_module, 'OBP_BRIDGES', {})
-    BRIDGES = make_bridges(expand_obp_bridges(rules_module.BRIDGES, _obp_bridges))
+    _xlx_bridges = getattr(rules_module, 'XLX_BRIDGES', {})
+    _expanded = expand_obp_bridges(rules_module.BRIDGES, _obp_bridges)
+    BRIDGES = make_bridges(expand_xlx_bridges(_expanded, _xlx_bridges))
 
     # Build the per-frame routing lookup indexes from the rules
     BRIDGE_SRC_INDEX, BRIDGE_BY_SYSTEM = index_bridges(BRIDGES)
 
     # Get rule parameter for private calls
     UNIT = rules_module.UNIT
+    validate_xlx_unit(UNIT)
 
     # The asyncio entry point: signal handling, reporting, a UDP endpoint for each
     # enabled system, and the rule-timer / stream-trimmer periodic tasks.

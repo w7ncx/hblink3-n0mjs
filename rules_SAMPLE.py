@@ -61,6 +61,31 @@ OBP_BRIDGES = {
 }
 
 '''
+XLX reflector connections also get their own table. An XLX system is a MODE:
+OUTBOUND system in hblink.cfg with an XLX_MODULE letter set; it is nailed up to
+exactly one conference bridge:
+
+    XLX_BRIDGES = { <XLX system from hblink.cfg> : <bridge name> }
+
+There is no TS or TGID column, and this is deliberate. Every XLX module presents
+as TS2/TG9 on the wire -- there is no module identifier in any frame -- so those
+values are protocol constants that bridge.py injects for you. They are not made
+configurable because a wrong value produces no visible symptom: the reflector
+never acknowledges anything, so the traffic would simply vanish. Notes:
+    * The module (A-Z) is set in hblink.cfg as XLX_MODULE, not here. One module
+      per connection; to bridge two modules, configure two systems.
+    * Leaving an XLX system as an inline BRIDGES member above is a startup ERROR.
+    * An XLX system in UNIT (below) is a startup ERROR -- a private call to the
+      reflector would change its module for everyone connected to it.
+    * No timers or ON/OFF/RESET triggers: there is no end user on the connection.
+    * XLX_BRIDGES is optional -- omit it or leave it {} if you run no reflectors.
+'''
+
+XLX_BRIDGES = {
+    # 'XLX950-D': 'WORLDWIDE',
+}
+
+'''
 UNIT: system names that should bridge unit-to-unit (individual/private) calls to each other.
 '''
 
@@ -75,4 +100,5 @@ if __name__ == '__main__':
     from pprint import pprint
     pprint(BRIDGES)
     pprint(OBP_BRIDGES)
+    pprint(XLX_BRIDGES)
     print(UNIT)

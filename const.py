@@ -76,3 +76,20 @@ RPTO    = b'RPTO'
 
 # Higheset peer ID permitted by HBP
 PEER_MAX = 4294967295
+
+# XLX reflector constants. These are protocol values, NOT configuration -- every
+# XLX module presents as TS2/TG9 on the wire and there is no module identifier in
+# any frame. xlxd hardcodes the same pair (DMRMMDVM_REFLECTOR_SLOT = DMR_SLOT2,
+# and dstId 9 in cdmrmmdvmprotocol.cpp), as does DMRGateway (XLX_SLOT/XLX_TG at
+# DMRGateway.cpp:57-58). The "TG 6" seen in hotspot documentation is DMRGateway's
+# configurable RF-side talkgroup, which it rewrites to TG9 before transmitting --
+# HBlink peers directly with xlxd, so TG9 is what we use. Never make these
+# settable: a wrong value produces traffic xlxd silently discards, with no ACK,
+# no module identity on the wire, and therefore no observable symptom.
+XLX_TS   = 2
+XLX_TGID = 9
+
+# Module letter <-> reflector talkgroup. A-Z maps to 4001-4026; 4000 is UNLINK and
+# is deliberately not a module.
+XLX_UNLINK   = 4000
+XLX_TG_BASE  = 4000

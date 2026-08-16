@@ -113,6 +113,27 @@ def acl_build(_acl, _max):
     ends = tuple(r[1] for r in merged)
     return (action, frozenset(singles), starts, ends)
 
+# Read the optional XLX_MODULE field for an OUTBOUND system. Presence of this
+# field is what marks a system as an XLX reflector connection -- there is no
+# separate mode or boolean, because XLX's DMR interface *is* the homebrew protocol
+# and needs no special handling beyond one link packet at connect.
+#
+# Returns the module letter as an uppercase str, or '' if the system is not XLX.
+# Note that a stock xlxd is built with NB_OF_MODULES = 10 (modules A-J); asking for
+# a module the reflector does not have produces no link and no error message of any
+# kind, so the value is validated here for form only.
+def _parse_xlx_module(_config, _section):
+    if not _config.has_option(_section, 'XLX_MODULE'):
+        return ''
+    _module = _config.get(_section, 'XLX_MODULE').strip().upper()
+    if not _module:
+        return ''
+    if len(_module) != 1 or not ('A' <= _module <= 'Z'):
+        sys.exit('XLX CONFIGURATION ERROR: XLX_MODULE for system "{}" must be a single '
+                 'letter A-Z, got "{}". Module numbers (4001-4026) are not accepted -- '
+                 'the talkgroup is derived from the letter.'.format(_section, _module))
+    return _module
+
 def build_config(_config_file):
     config = configparser.ConfigParser()
 
@@ -210,6 +231,7 @@ def build_config(_config_file):
                         'PACKAGE_ID': bytes(config.get(section, 'PACKAGE_ID').ljust(40)[:40], 'utf-8'),
                         'GROUP_HANGTIME': config.getint(section, 'GROUP_HANGTIME'),
                         'OPTIONS': bytes(config.get(section, 'OPTIONS'), 'utf-8'),
+                        'XLX_MODULE': _parse_xlx_module(config, section),
                         'USE_ACL': config.getboolean(section, 'USE_ACL'),
                         'SUB_ACL': config.get(section, 'SUB_ACL'),
                         'TG1_ACL': config.get(section, 'TGID_TS1_ACL'),
@@ -266,9 +288,17 @@ def build_config(_config_file):
     
     except configparser.Error as err:
         sys.exit('Error processing configuration file -- {}'.format(err))
-        
+
+    # XLX_MODULE is only meaningful on an OUTBOUND system: it is a client-side link
+    # sent to an upstream reflector. Catch it on any other mode rather than silently
+    # ignoring it, since a misplaced field would otherwise look like it took effect.
+    for _system, _sysconfig in CONFIG['SYSTEMS'].items():
+        if _sysconfig.get('XLX_MODULE') and _sysconfig['MODE'] != 'OUTBOUND':
+            sys.exit('XLX CONFIGURATION ERROR: system "{}" is MODE {} but sets XLX_MODULE. '
+                     'XLX connections must be MODE: OUTBOUND.'.format(_system, _sysconfig['MODE']))
+
     process_acls(CONFIG)
-    
+
     return CONFIG
 
 # Used to run this file direclty and print the config,

@@ -45,6 +45,9 @@ from bisect import bisect_right
 import log
 import config
 from const import *
+from bitarray import bitarray
+from dmr_utils3 import bptc, golay
+from dmr_utils3.const import BS_DATA_SYNC, LC_OPT_U
 from dmr_utils3.utils import int_id, bytes_4, try_download, mk_id_dict
 
 # Imports for the reporting server
@@ -77,6 +80,15 @@ REPORT_RESYNC_SECONDS = 60
 # _ping_loss_pct. PING_WARMUP is how many initial gaps are observed to calibrate a
 # repeater's ping cadence (median) before any loss is counted.
 PING_WARMUP = 4
+
+# Golay(20,8) slot type for a colour code and data type, as the 20 bits that sit
+# either side of the sync in a DMR burst. dmr_utils3.const.SLOT_TYPE has these
+# precomputed but only for colour code 1, and an XLX system uses whatever colour
+# code its config declares.
+def xlx_slot_type(_cc, _dtype):
+    _st = bitarray(endian='big')
+    _st.frombytes(golay.encode_2087(bytes([(_cc << 4) | _dtype])).to_bytes(3, 'big'))
+    return _st[4:24]
 
 # Generic periodic-task runner replacing twisted's task.LoopingCall. Runs _func
 # every _interval seconds. Unlike a bare LoopingCall, a raised exception is logged
@@ -396,6 +408,68 @@ class HBSYSTEM(asyncio.DatagramProtocol):
                 return
             _packet = b''.join([_packet[:11], self._config['RADIO_ID'], _packet[15:]])
         self.transport.sendto(_packet, self._config['SERVER_SOCKADDR'])
+
+    # --- XLX reflector module linking ---------------------------------------
+    #
+    # An XLX reflector selects its module (room) with an in-band private call to
+    # 4000+module on TS2 -- there is no field for it in the login handshake and no
+    # acknowledgement of any kind. The call is 5 DMRD frames sharing one stream ID:
+    # 3x VOICE_LC_HEADER then 2x TERMINATOR_WITH_LC.
+    #
+    # xlxd validates each frame at cdmrmmdvmprotocol.cpp:636-655 and silently drops
+    # anything failing: the packet must be exactly 55 bytes, DATA_SYNC frame type,
+    # TS2, slot type VOICE_LC_HEADER, and carry a real DMR data sync pattern. Only
+    # the header frames are parsed for the link command (the terminators have slot
+    # type 2 and are ignored); they are sent to frame the call correctly.
+    #
+    # xlxd reads the destination from the DMRD header and never decodes the LC (its
+    # BPTC decode is commented out), but we build the LC honestly from the same
+    # src/dst so the packet is not self-contradictory.
+    def send_xlx_link(self, _dst_id):
+        _src_id = int_id(self._config['RADIO_ID'])
+        _cc = int(self._config['COLORCODE'])
+        _stream_id = bytes([randint(0, 255) for _ in range(4)])
+        _lc = b''.join([LC_OPT_U, _dst_id.to_bytes(3, 'big'), _src_id.to_bytes(3, 'big')])
+
+        for _seq in range(5):
+            _term = _seq >= 3
+            _payload = bptc.encode_terminator_lc(_lc) if _term else bptc.encode_header_lc(_lc)
+            _st = xlx_slot_type(_cc, 2 if _term else 1)
+            # 33-byte burst: info | slot type | sync | slot type | info
+            _burst = _payload[0:98] + _st[0:10] + BS_DATA_SYNC + _st[10:20] + _payload[98:196]
+            # TS2 | private call | DATA_SYNC | slot type
+            _bits = 0x80 | 0x40 | 0x20 | (0x02 if _term else 0x01)
+            self.send_server(b''.join([
+                DMRD,
+                _seq.to_bytes(1, 'big'),
+                _src_id.to_bytes(3, 'big'),
+                _dst_id.to_bytes(3, 'big'),
+                self._config['RADIO_ID'],
+                _bits.to_bytes(1, 'big'),
+                _stream_id,
+                _burst.tobytes(),
+                b'\x00\x00',            # xlxd requires exactly 55 bytes
+            ]))
+
+    # Bind this connection to its configured XLX module. Sent on every transition
+    # into CONNECTION == 'YES', because the binding is per-session state on xlxd and
+    # is lost on any re-login.
+    #
+    # The unlink is not optional. While a client already holds a module, xlxd
+    # discards a link naming a different one and rewrites the header to the module
+    # already held (cdmrmmdvmprotocol.cpp:297-325) -- so on any reconnect where the
+    # old binding survives, link-only would silently leave us in the previous room.
+    def xlx_link_module(self):
+        if not self._config.get('XLX_MODULE'):
+            return
+        _module = self._config['XLX_MODULE']
+        _dst_id = XLX_TG_BASE + (ord(_module) - ord('A')) + 1
+        self.send_xlx_link(XLX_UNLINK)
+        self.send_xlx_link(_dst_id)
+        # This log line is the only evidence the link was attempted: xlxd never
+        # acknowledges it and no frame on the wire identifies the module.
+        logger.info('(%s) XLX module link sent: unlink then module %s (TG %s) -- no acknowledgement '
+                    'exists, confirm on the reflector dashboard', self._system, _module, _dst_id)
 
     def dmrd_received(self, _peer_id, _rf_src, _dst_id, _seq, _slot, _call_type, _frame_type, _dtype_vseq, _stream_id, _data):
         """Override in a subclass to handle inbound DMRD frames."""
@@ -755,6 +829,8 @@ class HBSYSTEM(asyncio.DatagramProtocol):
                             self._stats['CONNECTION'] = 'YES'
                             self._stats['CONNECTED'] = time()
                             logger.info('(%s) Connection to Server Completed', self._system)
+                            # Must follow the flag: send_server drops DMRD unless 'YES'
+                            self.xlx_link_module()
 
                     else:
                         self._stats['CONNECTION'] = 'NO'
@@ -767,6 +843,9 @@ class HBSYSTEM(asyncio.DatagramProtocol):
                         self._stats['CONNECTION'] = 'YES'
                         self._stats['CONNECTED'] = time()
                         logger.info('(%s) Connection to Server Completed with options', self._system)
+                        # Second link site: an XLX system may also carry OPTIONS, and
+                        # this path bypasses the one above entirely.
+                        self.xlx_link_module()
                     else:
                         self._stats['CONNECTION'] = 'NO'
                         logger.error('(%s) Server ACK Contained wrong ID - Connection Reset', self._system)
