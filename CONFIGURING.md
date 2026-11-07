@@ -129,7 +129,7 @@ You are the Server; Clients (repeaters, hotspots, or another HBlink acting as a 
 | `IP` | Local bind address (`0.0.0.0` = all interfaces). |
 | `PORT` | Local UDP port Clients connect to. |
 | `PASSPHRASE` | Shared login secret Clients must present. |
-| `GROUP_HANGTIME` | Seconds a slot stays reserved to the current talkgroup after a transmission, so quick replies aren't lost to contention. |
+| `GROUP_HANGTIME` | Seconds a slot stays reserved to the current talkgroup after a transmission – slow replies aren't lost to contention. |
 | `USE_ACL` | Enable this system's own ACLs. |
 | `REG_ACL` | Which radio IDs may register to this Server. |
 | `SUB_ACL` | Subscriber ACL for this system. |
