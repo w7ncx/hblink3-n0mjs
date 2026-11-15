@@ -341,12 +341,12 @@ async def hblink_feed():
         writer = None
         try:
             if HBLINK_TRANSPORT == 'unix':
-                reader, writer = await asyncio.open_unix_connection(HBLINK_SOCKET)
+                reader, writer = await asyncio.open_unix_connection(HBLINK_SOCKET, limit=4 * 1024 * 1024)
                 logger.info('connected to HBlink3 feed at unix socket %s', HBLINK_SOCKET)
             else:
                 reader, writer = await asyncio.open_connection(HBLINK_IP, HBLINK_PORT)
                 _enable_tcp_keepalive(writer)
-                logger.info('connected to HBlink3 feed at %s:%s', HBLINK_IP, HBLINK_PORT)
+                logger.info('connected to HBlink3 feed at %s:%s', HBLINK_IP, HBLINK_PORT, limit=4 * 1024 * 1024)
             STATE.hblink = True
             await broadcast({'type': 'hblink', 'connected': True})
             while True:
@@ -355,6 +355,9 @@ async def hblink_feed():
                 except asyncio.TimeoutError:
                     logger.warning('no data from HBlink3 for %ss; assuming link dead, reconnecting',
                                    FEED_READ_TIMEOUT)
+                    break
+                except asyncio.LimitOverrunError as e:
+                    logger.error('HBlink3 feed line exceeds stream reader limit: %s',e)
                     break
                 if not line:
                     break                                  # connection closed
